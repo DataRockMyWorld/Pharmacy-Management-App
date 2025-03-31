@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+    <h1>Receipt</h1>
+    <p>Branch: {{ sale.branch.name }}</p>
+    <p>Date: {{ sale.date }}</p>
+    <p>Processed By: {{ sale.processed_by.username }}</p>
+    <p>Customer: {{ sale.customer.name if sale.customer else "Anonymous" }}</p>
+    <p>Payment Method: {{ sale.payment_method }}</p>
+    <p>Total Amount: ${{ sale.total_amount }}</p>
+    
+    <h2>Items Purchased</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Price at Sale</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.product.name }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>${{ item.price_at_sale }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

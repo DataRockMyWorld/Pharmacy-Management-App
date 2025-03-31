@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>Inventory Report</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Product</th>
+                <th>Branch</th>
+                <th>Quantity</th>
+                <th>Last Checked</th>
+                <th>Expiration Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for inventory in inventories %}
+            <tr>
+                <td>{{ inventory.product.name }}</td>
+                <td>{{ inventory.branch.name }}</td>
+                <td>{{ inventory.quantity }}</td>
+                <td>{{ inventory.last_checked }}</td>
+                <td>{{ inventory.expiration_date }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

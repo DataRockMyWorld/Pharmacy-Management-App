@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>Stock Transfer Report</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>From Branch</th>
+                <th>To Branch</th>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Status</th>
+                <th>Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for transfer in transfers %}
+            <tr>
+                <td>{{ transfer.from_branch.name }}</td>
+                <td>{{ transfer.to_branch.name }}</td>
+                <td>{{ transfer.product.name }}</td>
+                <td>{{ transfer.quantity }}</td>
+                <td>{{ transfer.transfer_status }}</td>
+                <td>{{ transfer.transfer_date }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
