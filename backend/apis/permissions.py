@@ -30,3 +30,7 @@ class IsCEOOrBranchAdmin(permissions.BasePermission):
                 return obj.branch == request.user.branch
         
         return False
+
+class IsCEO(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.role == 'CEO'

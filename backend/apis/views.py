@@ -1,10 +1,11 @@
 from rest_framework.views import APIView
 from sites.models import Site
 from apis.serializers import SiteSerializer
-from .permissions import IsCEOOrBranchAdmin
+from .permissions import IsCEOOrBranchAdmin, IsCEO
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework import generics
 from products.models import Product
 from apis.serializers import (ProductSerializer, 
@@ -12,8 +13,9 @@ from apis.serializers import (ProductSerializer,
                               StockMovementSerializer, 
                               StockTransferSerializer,
                               CustomerSerializer,
-                              NotificationSerializer)
-from inventory.models import Inventory, StockMovement, StockTransfer, Notification
+                              NotificationSerializer,
+                              WarehouseReceivingSerializer)
+from inventory.models import Inventory, StockMovement, StockTransfer, Notification, InventoryVersion
 from accounts.models import User, Customer
 import csv
 from django.http import HttpResponse
@@ -26,7 +28,17 @@ from django.core.paginator import Paginator
 from .utils import send_sms
 from rest_framework import status
 from .utils import invalidate_cache
+from django.utils import timezone
+from django.shortcuts import get_object_or_404
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from django.http import HttpResponse
+from django.http import FileResponse
+from io import BytesIO
+import logging
+from rest_framework import serializers
 
+logger = logging.getLogger(__name__)
 
 
 
@@ -137,7 +149,8 @@ class InventoryListCreateAPIView(generics.ListCreateAPIView):
     def get_queryset(self):
         user = self.request.user
         if user.role == 'CEO':
-            return Inventory.objects.all()  # CEO can see all inventory
+            warehouse = Site.objects.filter(is_warehouse=True).first()
+            return Inventory.objects.filter(branch=warehouse)
         return Inventory.objects.filter(branch=user.branch)  # Only branch-specific inventory for other users
 
     def perform_create(self, serializer):
@@ -197,16 +210,23 @@ class StockTransferListCreateAPIView(generics.ListCreateAPIView):
         return StockTransfer.objects.filter(from_branch=user.branch)
     
     def perform_create(self, serializer):
-        serializer.save()
+        from_branch = self.request.user.branch
+        try:
+            to_branch = Site.objects.get(is_warehouse=True)
+        except Site.DoesNotExist:
+            raise serializers.ValidationError("Warehouse site not configured.")
         
-        #Invalidate Cache for both branches
-        invalidate_cache(user=self.request.user)
-        if serializer.save().to_branch:
-            invalidate_cache()
-            
-    def perform_create(self, serializer):
-        transfer = serializer.save(requested_by=self.request.user)
+        transfer = serializer.save(
+            from_branch=from_branch,
+            to_branch=to_branch,
+            requested_by=self.request.user)
+        
+        # Create StockMovement placeholder
         create_transfer_request_notification(transfer)
+        invalidate_cache(user=self.request.user)
+        if transfer.to_branch:
+            invalidate_cache()
+
 class StockTransferDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     queryset = StockTransfer.objects.all()
     serializer_class = StockTransferSerializer
@@ -299,48 +319,77 @@ class StockMovementReportAPIView(APIView):
         # Standard JSON response
         serializer = StockMovementSerializer(movements, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
-
+ 
 class StockTransferApprovalAPIView(APIView):
-    permission_classes = [IsCEOOrBranchAdmin]
+    permission_classes = [IsCEO]  # or IsCEOOrBranchAdmin
 
     def post(self, request, transfer_id):
-        transfer = StockTransfer.objects.get(id=transfer_id)
+        transfer = get_object_or_404(StockTransfer, id=transfer_id)
 
-        # Approve the transfer
-        if transfer.transfer_status == 'PENDING':
-            transfer.transfer_status = 'APPROVED'
+        if transfer.transfer_status != 'PENDING':
+            return Response({"error": "Transfer already processed."}, status=400)
+
+        action = request.data.get("action")
+        rejection_reason = request.data.get("rejection_reason", "")
+
+        if action not in ["approve", "reject"]:
+            return Response({"error": "Invalid action"}, status=400)
+
+        transfer.processed_by = request.user
+        transfer.processed_at = timezone.now()
+
+        if action == "approve":
+            # Move to IN_TRANSIT state
+            transfer.transfer_status = 'IN_TRANSIT'
+            transfer.approved = True
             transfer.approved_by = request.user
             transfer.save()
 
-            # Adjust inventory quantities
-            from_inventory = Inventory.objects.get(product=transfer.product, branch=transfer.from_branch)
-            to_inventory = Inventory.objects.get(product=transfer.product, branch=transfer.to_branch)
-
-            from_inventory.adjust_quantity(-transfer.quantity)  # Reduce stock at the source branch
-            to_inventory.adjust_quantity(transfer.quantity)     # Increase stock at the destination branch
-
-            # Log stock movement
-            StockMovement.objects.create(
-                product=transfer.product,
-                branch=transfer.from_branch,
-                movement_type='TRANSFER',
-                quantity=-transfer.quantity,
-                details=f"Transferred to {transfer.to_branch.name}"
+            # Notify branch
+            Notification.objects.create(
+                recipient=transfer.requested_by,
+                sender=request.user,
+                related_branch=transfer.to_branch,
+                notification_type='TRANSFER_APPROVAL',
+                title='Stock Transfer Approved',
+                message=(
+                    f"Your transfer request for {transfer.product.name} "
+                    f"({transfer.quantity}) has been approved and is now in transit."
+                ),
+                related_object_id=transfer.id
             )
 
-            StockMovement.objects.create(
-                product=transfer.product,
-                branch=transfer.to_branch,
-                movement_type='TRANSFER',
-                quantity=transfer.quantity,
-                details=f"Transferred from {transfer.from_branch.name}"
+            return Response({
+                "message": "Transfer approved and marked as in transit.",
+                "status": "IN_TRANSIT",
+                "transfer": StockTransferSerializer(transfer).data
+            })
+
+        elif action == "reject":
+            transfer.transfer_status = 'REJECTED'
+            transfer.approved = False
+            transfer.rejection_reason = rejection_reason
+            transfer.save()
+
+            # Notify branch
+            Notification.objects.create(
+                recipient=transfer.requested_by,
+                sender=request.user,
+                related_branch=transfer.to_branch,
+                notification_type='TRANSFER_REJECTION',
+                title='Stock Transfer Rejected',
+                message=(
+                    f"Your transfer request for {transfer.product.name} "
+                    f"was rejected. Reason: {rejection_reason or 'Not specified'}"
+                ),
+                related_object_id=transfer.id
             )
 
-            return Response({"message": "Transfer approved and stock updated."}, status=status.HTTP_200_OK)
-        else:
-            return Response({"message": "Transfer already processed or rejected."}, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({
+                "message": "Transfer request rejected.",
+                "status": "REJECTED",
+                "transfer": StockTransferSerializer(transfer).data
+            })
 
 
 class StockTransferReportAPIView(APIView):
@@ -565,7 +614,7 @@ class NotificationListCreateAPIView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         # Only show notifications for the current user
-        return Notification.objects.filter(recipient=self.request.user).order_by('-created_at')
+        return Notification.objects.filter(recipient=self.request.user, is_archived=False).order_by('-created_at')
 
     def perform_create(self, serializer):
         serializer.save(recipient=self.request.user)
@@ -577,6 +626,33 @@ class NotificationDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         # Only allow access to notifications for the current user
         return Notification.objects.filter(recipient=self.request.user)
+    
+
+class ClearAllNotificationsAPIView(generics.DestroyAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Notification.objects.filter(recipient=self.request.user)
+
+    def delete(self, request, *args, **kwargs):
+        # Delete all notifications for the current user
+        count, _ = self.get_queryset().delete()
+        return Response(
+            {"message": f"Successfully deleted {count} notifications"},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def archive_notification(request, pk):
+    try:
+        notification = Notification.objects.get(id=pk, recipient=request.user)
+    except Notification.DoesNotExist:
+        return Response({'error': 'Notification not found'}, status=404)
+
+    notification.is_archived = True
+    notification.save()
+    return Response({'message': 'Notification archived'}, status=200)
 
 class MarkAsReadAPIView(generics.UpdateAPIView):
     serializer_class = NotificationSerializer
@@ -616,3 +692,324 @@ class UnreadCountAPIView(generics.GenericAPIView):
         ).count()
         
         return Response({'unread_count': count})
+    
+
+class WarehouseReceivingAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCEO]
+
+    def post(self, request):
+        serializer = WarehouseReceivingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        product = data['product_id']
+        quantity = data['quantity']
+        batch_number = data.get('batch_number', '')
+        expiration_date = data.get('expiration_date')
+
+        warehouse = Site.objects.filter(is_warehouse=True).first()
+        if not warehouse:
+            return Response({"error": "Warehouse site not configured."}, status=500)
+
+        inventory, created = Inventory.objects.get_or_create(
+            product=product,
+            branch=warehouse,
+            batch_number=batch_number,
+            defaults={
+                "quantity": 0,
+                "expiration_date": expiration_date,
+                "received_by": request.user,
+            }
+        )
+
+        prev_qty = inventory.quantity
+        inventory.quantity += quantity
+        if expiration_date:
+            inventory.expiration_date = expiration_date
+        inventory.received_by = request.user
+        inventory.save()
+
+        # Stock movement log
+        sm = StockMovement.objects.create(
+            product=product,
+            branch=warehouse,
+            movement_type='ADD',
+            quantity=quantity,
+            details=f"Warehouse received new stock. Batch: {batch_number or 'N/A'}"
+        )
+
+        # Inventory version log
+        InventoryVersion.objects.create(
+            inventory=inventory,
+            previous_quantity=prev_qty,
+            new_quantity=inventory.quantity,
+            modified_by=request.user,
+            stock_movement=sm
+        )
+
+        return Response({
+            "message": f"{quantity} units of {product.name} received into warehouse.",
+            "inventory_id": inventory.id,
+            "current_quantity": inventory.quantity
+        }, status=200)
+        
+class WarehouseReceivingDocumentPDFView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, inventory_id):
+        try:
+            inventory = Inventory.objects.select_related('product', 'received_by').get(id=inventory_id)
+        except Inventory.DoesNotExist:
+            return Response({'error': 'Inventory not found'}, status=404)
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="receiving_doc_{inventory_id}.pdf"'
+
+        p = canvas.Canvas(response)
+        p.setFont("Helvetica-Bold", 16)
+        p.drawString(100, 800, "Warehouse Receiving Document")
+
+        p.setFont("Helvetica", 12)
+        p.drawString(100, 760, f"Product: {inventory.product.name}")
+        p.drawString(100, 740, f"Quantity: {inventory.quantity}")
+        p.drawString(100, 720, f"Batch: {inventory.batch_number or 'N/A'}")
+        p.drawString(100, 700, f"Expiration Date: {inventory.expiration_date or 'N/A'}")
+        p.drawString(100, 680, f"Received By: {inventory.received_by.get_full_name}")
+        p.drawString(100, 660, f"Date: {inventory.updated_at.strftime('%Y-%m-%d')}")
+
+        p.showPage()
+        p.save()
+
+        return response
+
+class MarkTransferReceivedAPIView(APIView):
+    def post(self, request, pk):
+        transfer = get_object_or_404(StockTransfer, id=pk)
+        transfer.received = True
+        transfer.save()
+        return Response({"message": "Marked as received."})
+
+
+class GenerateTransferReceiptAPIView(APIView):
+    def get(self, request, transfer_id):
+        # Get transfer data
+        transfer = get_object_or_404(StockTransfer, pk=transfer_id)
+        
+        # Create PDF response
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="transfer_receipt_{transfer_id}.pdf"'
+        
+        # Generate PDF
+        p = canvas.Canvas(response, pagesize=letter)
+        p.setFont("Helvetica-Bold", 16)
+        p.drawString(100, 750, "Stock Transfer Receipt")
+        
+        # Add transfer details
+        p.setFont("Helvetica", 12)
+        p.drawString(100, 700, f"Transfer ID: {transfer.id}")
+        p.drawString(100, 680, f"Date: {transfer.created_at.strftime('%Y-%m-%d %H:%M')}")
+        p.drawString(100, 660, f"Product: {transfer.product.name}")
+        p.drawString(100, 640, f"Quantity: {transfer.quantity}")
+        p.drawString(100, 620, f"From: {transfer.source_site.name}")
+        p.drawString(100, 600, f"To: {transfer.destination_site.name}")
+        p.drawString(100, 580, f"Status: {transfer.status}")
+        
+        if transfer.status == 'REJECTED':
+            p.drawString(100, 560, f"Reason: {transfer.rejection_reason}")
+        
+        # Add authorized signatures section
+        p.drawString(100, 500, "Authorized Signatures:")
+        p.line(100, 490, 300, 490)
+        p.drawString(100, 470, "Warehouse Manager")
+        
+        p.line(350, 490, 550, 490)
+        p.drawString(350, 470, "Receiving Branch Representative")
+        
+        p.showPage()
+        p.save()
+        return response
+    
+class ReceiveTransferAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, transfer_id):
+        try:
+            transfer = StockTransfer.objects.get(id=transfer_id, to_branch=request.user.branch)
+        except StockTransfer.DoesNotExist:
+            return Response({"error": "Transfer not found"}, status=404)
+
+        if transfer.transfer_status != 'IN_TRANSIT':
+            return Response({"error": "Already received or invalid state"}, status=400)
+
+        # Decrease warehouse inventory
+        from_inventory = Inventory.objects.filter(
+            product=transfer.product,
+            branch=transfer.from_branch
+        ).order_by('-updated_at').first()
+
+        if not from_inventory:
+            return Response({"error": "Source inventory not found"}, status=404)
+
+        prev_from_qty = from_inventory.quantity
+        if prev_from_qty < transfer.quantity:
+            return Response({"error": "Source branch has insufficient stock"}, status=400)
+
+        # Decrease stock via logic, but record positive quantity
+        from_inventory.adjust_quantity(-transfer.quantity)
+
+        sm_out = StockMovement.objects.create(
+            product=transfer.product,
+            branch=from_inventory.branch,
+            movement_type='TRANSFER',
+            quantity=transfer.quantity,  # ✅ now POSITIVE
+            details=f"Dispatched to {transfer.to_branch.name}",
+            linked_transfer=transfer
+        )
+
+        InventoryVersion.objects.create(
+            inventory=from_inventory,
+            previous_quantity=prev_from_qty,
+            new_quantity=from_inventory.quantity,
+            modified_by=request.user,
+            stock_movement=sm_out
+        )
+
+        # Increase inventory at destination
+        to_inventory, _ = Inventory.objects.get_or_create(
+            product=transfer.product,
+            branch=transfer.to_branch,
+            defaults={"quantity": 0}
+        )
+        prev_qty = to_inventory.quantity
+        to_inventory.adjust_quantity(transfer.quantity)
+
+        sm_in = StockMovement.objects.create(
+            product=transfer.product,
+            branch=to_inventory.branch,
+            movement_type='TRANSFER',
+            quantity=transfer.quantity,
+            details=f"Received from {transfer.from_branch.name}",
+            linked_transfer=transfer
+        )
+
+        InventoryVersion.objects.create(
+            inventory=to_inventory,
+            previous_quantity=prev_qty,
+            new_quantity=to_inventory.quantity,
+            modified_by=request.user,
+            stock_movement=sm_in
+        )
+
+        transfer.transfer_status = 'RECEIVED'
+        transfer.received_by = request.user
+        transfer.received_at = timezone.now()
+        transfer.save()
+
+        # Notify sender admin
+        try:
+            admin_user = User.objects.get(branch=transfer.from_branch, role='Admin')
+            Notification.objects.create(
+                recipient=admin_user,
+                sender=request.user,
+                related_object_id=transfer.id,
+                notification_type='SYSTEM',
+                title="Dispatch Received",
+                message=f"{transfer.product.name} was received at {transfer.to_branch.name}."
+            )
+        except User.DoesNotExist:
+            logger.warning(f"No Admin user found at branch {transfer.from_branch.name} to notify about transfer {transfer.id}")
+
+        return Response({"message": "Transfer received successfully"})
+
+
+
+class WarehouseDispatchAPIView(APIView):
+    permission_classes = [IsCEO]
+
+    def post(self, request):
+        data = request.data
+        product_id = data.get("product_id")
+        quantity = int(data.get("quantity", 0))
+        destination_id = data.get("destination_id")
+        notes = data.get("notes", "")
+
+        if not all([product_id, destination_id, quantity]):
+            return Response({"error": "Missing required fields"}, status=400)
+
+        try:
+            product = Product.objects.get(id=product_id)
+            destination = Site.objects.get(id=destination_id)
+            warehouse = request.user.branch
+            from_inventory = Inventory.objects.filter(product=product, branch=warehouse).order_by('-updated_at').first()
+            if not from_inventory:
+                return Response({"error": "No inventory record found"}, status=404)
+        except (Product.DoesNotExist, Site.DoesNotExist):
+            return Response({"error": "Invalid product or destination"}, status=404)
+
+        if from_inventory.quantity < quantity:
+            return Response({"error": "Insufficient stock"}, status=400)
+
+        # Create transfer record
+        transfer = StockTransfer.objects.create(
+            from_branch=warehouse,
+            to_branch=destination,
+            product=product,
+            quantity=quantity,
+            transfer_status='IN_TRANSIT',
+            is_warehouse_initiated=True,
+            approved=True,
+            processed_by=request.user,
+            processed_at=timezone.now(),
+            details=notes
+        )
+
+        # Send notification to receiving branch admin
+        if hasattr(destination, 'admin_user'):
+            Notification.objects.create(
+                recipient=destination.admin_user,
+                sender=request.user,
+                notification_type='TRANSFER_APPROVAL',
+                related_branch=warehouse,
+                related_object_id=transfer.id,
+                title=f"Dispatch Incoming: {product.name}",
+                message=f"{quantity}x {product.name} has been dispatched to your branch.",
+            )
+
+        return Response({"message": "Dispatch successful", "transfer_id": transfer.id})
+
+class DispatchDocumentAPIView(APIView):
+    permission_classes = [IsCEO]
+
+    def get(self, request, transfer_id):
+        try:
+            transfer = StockTransfer.objects.get(id=transfer_id)
+            
+            # Create PDF
+            buffer = BytesIO()
+            p = canvas.Canvas(buffer)
+            
+            # Add document content
+            p.drawString(100, 800, f"Dispatch Document #{transfer.id}")
+            p.drawString(100, 780, f"Product: {transfer.product.name}")
+            p.drawString(100, 760, f"Quantity: {transfer.quantity}")
+            # ... add more details
+            
+            p.showPage()
+            p.save()
+            
+            buffer.seek(0)
+            return FileResponse(buffer, as_attachment=True, filename=f"dispatch_{transfer_id}.pdf")
+        except StockTransfer.DoesNotExist:
+            return Response({"error": "Transfer not found"}, status=404)
+
+# views.py
+class InTransitTransfersAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        transfers = StockTransfer.objects.filter(
+            to_branch=request.user.branch,
+            transfer_status='IN_TRANSIT'
+        )
+        serializer = StockTransferSerializer(transfers, many=True)
+        return Response(serializer.data)

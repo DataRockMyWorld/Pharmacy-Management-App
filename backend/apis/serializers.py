@@ -7,6 +7,7 @@ from sales.models import Sale, SaleItem
 from accounts.models import Customer
 from .utils import invalidate_cache
 from accounts.serializers import UserMeSerializer
+from django.utils.timesince import timesince
 
 class SiteSerializer(serializers.ModelSerializer):
     class Meta:
@@ -32,14 +33,117 @@ class StockMovementSerializer(serializers.ModelSerializer):
         model = StockMovement
         fields = '__all__'
 
+
 class StockTransferSerializer(serializers.ModelSerializer):
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
-    from_branch = serializers.PrimaryKeyRelatedField(queryset=Site.objects.all())
-    to_branch = serializers.PrimaryKeyRelatedField(queryset=Site.objects.all())
+    from_branch = serializers.PrimaryKeyRelatedField(read_only=True)
+    to_branch = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    from_branch_name = serializers.CharField(source='from_branch.name', read_only=True)
+    to_branch_name = serializers.CharField(source='to_branch.name', read_only=True)
+
+    approved_by = serializers.StringRelatedField(read_only=True)
+    processed_by = serializers.StringRelatedField(read_only=True)
+    confirmed_by = serializers.StringRelatedField(read_only=True)
+
+    quantity_received = serializers.IntegerField(read_only=True)
+    damaged_quantity = serializers.IntegerField(read_only=True)
+    
+    status_display = serializers.CharField(source='get_transfer_status_display', read_only=True)
+    time_since_requested = serializers.SerializerMethodField()
+    formatted_transfer_date = serializers.SerializerMethodField()
+
+    metadata = serializers.SerializerMethodField()
 
     class Meta:
         model = StockTransfer
-        fields = ['id', 'from_branch', 'to_branch', 'product', 'quantity', 'transfer_date', 'approved', 'details']
+        fields = [
+            'id',
+            'from_branch',
+            'from_branch_name',
+            'to_branch',
+            'to_branch_name',
+            'product',
+            'product_name',
+            'quantity',
+            'transfer_date',
+            'formatted_transfer_date',
+            'time_since_requested',
+            'approved',
+            'approved_by',
+            'transfer_status',
+            'status_display',
+            'processed_by',
+            'rejection_reason',
+            'is_warehouse_initiated',
+            'received',
+            'details',
+            'requested_by',
+            'confirmed_by',
+            'confirmed_at',
+            'quantity_received',
+            'damaged_quantity',
+            'metadata',
+        ]
+    
+    def get_time_since_requested(self, obj):
+        return timesince(obj.transfer_date)
+    
+    def get_formatted_transfer_date(self, obj):
+        return obj.transfer_date.strftime('%Y-%m-%d %H:%M:%S') if obj.transfer_date else None
+
+    def get_metadata(self, obj):
+        return {
+            'product_name': obj.product.name,
+            'quantity': obj.quantity,
+            'branch_name': obj.to_branch.name if obj.to_branch else None,
+            'requested_by': str(obj.requested_by),
+            'rejection_reason': obj.rejection_reason,
+            'status_display': obj.get_transfer_status_display(),
+            'time_since': timesince(obj.transfer_date) if obj.transfer_date else None,
+        }
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    sender = UserMeSerializer(read_only=True)
+    recipient = UserMeSerializer(read_only=True)
+    related_branch = SiteSerializer(read_only=True)
+    time_since = serializers.SerializerMethodField()
+    related_transfer = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = [
+            'id',
+            'notification_type',
+            'title',
+            'message',
+            'is_read',
+            'sender',
+            'recipient',
+            'related_branch',
+            'related_object_id',
+            'created_at',
+            'updated_at',
+            'time_since',
+            'related_transfer',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_time_since(self, obj):
+        from django.utils.timesince import timesince
+        return timesince(obj.created_at)
+
+    def get_related_transfer(self, obj):
+        if obj.notification_type == 'TRANSFER_REQUEST':
+            try:
+                transfer = StockTransfer.objects.get(id=obj.related_object_id)
+                return StockTransferSerializer(transfer, context=self.context).data
+            except StockTransfer.DoesNotExist:
+                return None
+        return None
+
 
 class SaleItemSerializer(serializers.ModelSerializer):
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
@@ -135,7 +239,8 @@ class NotificationSerializer(serializers.ModelSerializer):
     recipient = UserMeSerializer(read_only=True)
     related_branch = SiteSerializer(read_only=True)
     time_since = serializers.SerializerMethodField()
-    
+    related_transfer = serializers.SerializerMethodField()
+
     class Meta:
         model = Notification
         fields = [
@@ -150,11 +255,32 @@ class NotificationSerializer(serializers.ModelSerializer):
             'related_object_id',
             'created_at',
             'updated_at',
-            'time_since'
+            'time_since',
+            'related_transfer',
         ]
         read_only_fields = ['created_at', 'updated_at']
 
     def get_time_since(self, obj):
         from django.utils.timesince import timesince
         return timesince(obj.created_at)
+
+    def get_related_transfer(self, obj):
+        if obj.notification_type == 'TRANSFER_REQUEST':
+            try:
+                transfer = StockTransfer.objects.get(id=obj.related_object_id)
+                return StockTransferSerializer(transfer, context=self.context).data
+            except StockTransfer.DoesNotExist:
+                return None
+        return None
     
+
+class WarehouseReceivingSerializer(serializers.Serializer):
+    product_id = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    quantity = serializers.IntegerField(min_value=1)
+    batch_number = serializers.CharField(required=False, allow_blank=True)
+    expiration_date = serializers.DateField(required=False, allow_null=True)
+
+    def validate(self, data):
+        if data['quantity'] <= 0:
+            raise serializers.ValidationError("Quantity must be greater than 0.")
+        return data
