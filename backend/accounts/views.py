@@ -2,7 +2,7 @@ from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import CustomTokenObtainPairSerializer
-from .serializers import LoginSerializer, PasswordResetConfirmSerializer, LogoutUserSerializer, UserMeSerializer
+from .serializers import LoginSerializer, PasswordResetConfirmSerializer, LogoutUserSerializer, UserMeSerializer, UserSerializer
 from rest_framework import status
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.permissions import AllowAny
@@ -14,6 +14,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import generics
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,16 @@ class MeAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        print(f"DEBUG: user = {request.user}")
-        print(f"DEBUG: user.is_authenticated = {request.user.is_authenticated}")
         serializer = UserMeSerializer(request.user)
         return Response(serializer.data)
+
+
+class UserListCreateAPIView(generics.ListCreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
+
+class UserDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]

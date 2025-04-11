@@ -138,3 +138,19 @@ class UserMeSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return obj.get_full_name
+
+class UserSerializer(serializers.ModelSerializer):
+    branch_name = serializers.CharField(source='branch.name', read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'first_name', 'last_name', 'phone_number',
+            'role', 'branch', 'branch_name',
+            'is_active', 'is_staff', 'is_superuser', 'last_login', 'date_joined'
+        ]
+        read_only_fields = ['id', 'last_login', 'date_joined']
+    def create(self, validated_data):
+        user = User.objects.create_user(**validated_data)
+        return user
+    

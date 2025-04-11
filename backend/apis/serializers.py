@@ -12,7 +12,7 @@ from django.utils.timesince import timesince
 class SiteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Site
-        fields = ['id', 'name']
+        fields = '__all__'
         
 class ProductSerializer(serializers.ModelSerializer):
     class Meta:

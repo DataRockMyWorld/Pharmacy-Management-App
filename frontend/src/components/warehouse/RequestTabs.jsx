@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Box, Paper, Typography, Button, Select, MenuItem, FormControl,
-  InputLabel, Tab, Tabs, Badge, Chip, Pagination, Tooltip
+  InputLabel, Tab, Tabs, Badge, Chip, Pagination, Tooltip, Stack
 } from '@mui/material';
 import { Inbox, Archive, Visibility } from '@mui/icons-material';
 import dayjs from 'dayjs';
@@ -25,7 +25,7 @@ const RequestTabs = ({
   tab, setTab,
   statusFilter, setStatusFilter,
   requests, processedRequests,
-  onViewRequest
+  onViewRequest, onArchiveRequest
 }) => {
   const [page, setPage] = useState(1);
   const rowsPerPage = 5;
@@ -106,7 +106,7 @@ const RequestTabs = ({
                   {dayjs(req.created_at).format('MMM D, YYYY h:mm A')}
                 </Typography>
               </Box>
-              <Box display="flex" alignItems="center" gap={1}>
+              <Stack direction="row" spacing={1} alignItems="center">
                 {tab === 1 && <StatusChip label={req.status} />}
                 <Tooltip title="View request">
                   <Button
@@ -119,7 +119,19 @@ const RequestTabs = ({
                     View
                   </Button>
                 </Tooltip>
-              </Box>
+                {tab === 1 && (
+                  <Tooltip title="Archive this request">
+                    <Button
+                      size="small"
+                      color="secondary"
+                      variant="text"
+                      onClick={() => onArchiveRequest(req)}
+                    >
+                      Archive
+                    </Button>
+                  </Tooltip>
+                )}
+              </Stack>
             </Paper>
           </motion.div>
         ))}
@@ -146,5 +158,4 @@ const RequestTabs = ({
 };
 
 export default RequestTabs;
-
 

@@ -6,6 +6,7 @@ import Login from './components/login'
 import ResetPassword from './components/ResetPassword'
 import ErrorBoundary from './components/ErrorBoundary';
 import ResetPasswordConfirm from './components/ResetPasswordConfirm'
+import Branches from './pages/Branches';
 import PrivateRoute from './components/PrivateRoute';
 import Dashboard from './pages/Dashboard'
 import Layout from './components/Layout';
@@ -13,6 +14,7 @@ import Purchase from './pages/Purchase'
 import Customer from './pages/Customer';
 import Product from './pages/Product';
 import Manufacturer from './pages/Manufacturer';
+import Users from './pages/Users';
 import Stock from './pages/Stock';
 import Warehouse from './pages/Warehouse';
 import TransactionHistory from './pages/TransactionHistory';
@@ -31,8 +33,7 @@ function App() {
             <Routes>
               {/* Public routes */}
               <Route path="/login" element={<Login />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/reset-password-confirm/:user_id/reset_code" element={<ResetPasswordConfirm />} />
+              <Route path="/reset-password/:user_id/:reset_code" element={<ResetPassword />} />
 
               {/* Protected routes with layout */}
               <Route element={<Layout />}>
@@ -40,13 +41,15 @@ function App() {
                 <Route path="/purchase" element={<Purchase />} />
                 <Route path="/transaction-history" element={<TransactionHistory />} />
                 <Route path="/customer" element={<Customer />} />
-                <Route path="/product" element={<Product />} />
                 <Route path="/manufacturer" element={<Manufacturer />} />
                 <Route path="/stock" element={<Stock />} />
                 
                 {/* CEO-only routes */}
                 <Route element={<PrivateRoute roles={['CEO']} />}>
                   <Route path="/warehouse" element={<Warehouse />} />
+                  <Route path="/product" element={<Product />} />
+                  <Route path="/branches" element={<Branches />} />
+                  <Route path="/users" element={<Users />} />
                 </Route>
               </Route>
             </Routes>

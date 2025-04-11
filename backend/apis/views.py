@@ -58,8 +58,8 @@ class SiteListCreateAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
     
     
-    def post(self, request, pk, *args, **kwargs):
-        if request.user.role == 'CEO':
+    def post(self, request, *args, **kwargs):
+        if request.user.role == 'Admin':
             return Response({'detail': 'You are not authorized to create a site.'}, status=status.HTTP_403_FORBIDDEN)
         serializer = SiteSerializer(data=request.data)
         if serializer.is_valid():

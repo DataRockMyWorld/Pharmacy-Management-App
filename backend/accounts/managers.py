@@ -36,6 +36,10 @@ class UserManager(BaseUserManager):
         if not phone_number:
             raise ValueError(_('The Phone Number field must be set'))
         
+        # CHECK IF THE USER ALREADY EXISTS
+        if self.model.objects.filter(email=email).exists():
+            raise ValidationError(_('User with this email already exists.'))
+        
         user = self.model(
             email=email,
             first_name=first_name,
@@ -85,7 +89,7 @@ class UserManager(BaseUserManager):
         try:
             reset_code = user.generate_reset_code()
             print(f"Generated Code: {reset_code}")
-            reset_url = f"http://127.0.0.1:8000/api/v1/password-reset-confirm/{user.pk}/{reset_code}/"
+            reset_url = f"http://127.0.0.1:5173/api/v1/password-reset-confirm/{user.pk}/{reset_code}/"
 
             logger.info(f"Generated Token: {reset_code}")
             logger.info(f"Generated UID: {user.pk}")

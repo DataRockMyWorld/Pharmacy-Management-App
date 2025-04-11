@@ -178,8 +178,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 
-FRONTEND_URL = "http://localhost:3000"
+FRONTEND_URL = ["http://localhost:3000","http://localhost:5173"]
 
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+]
 
 #EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 EMAIL_HOST = 'sandbox.smtp.mailtrap.io'

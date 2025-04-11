@@ -78,7 +78,7 @@ urlpatterns = [
     path('notifications/mark-all-as-read/', MarkAllAsReadAPIView.as_view(), name='mark-all-as-read'),
     path('notifications/unread-count/', UnreadCountAPIView.as_view(), name='unread-count'),
     path('notifications/clear-all/', ClearAllNotificationsAPIView.as_view(), name='clear-all-notifications'),
-    path('notifications/<int:pk>/archive/', archive_notification, name='archive-notification'),  # Archive a notification
+    path('notifications/archive/<int:pk>/', archive_notification, name='archive-notification'),  # Archive a notification
 
     # 📥 WAREHOUSE RECEIVING
     path('warehouse/receive/', WarehouseReceivingAPIView.as_view(), name='warehouse-receive'),  # Manual input of warehouse stock

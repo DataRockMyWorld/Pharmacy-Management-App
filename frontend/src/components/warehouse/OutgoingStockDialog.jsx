@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Grid, Select, MenuItem, InputLabel,
@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import axios from '../../utils/axiosInstance';
 
-const OutgoingStockDialog = ({ open, onClose, onSuccess, products, sites }) => {
+const OutgoingStockDialog = ({ open, onClose, onSuccess, products, sites, prefill }) => {
   const [formData, setFormData] = useState({
     product_id: '',
     quantity: '',
@@ -14,6 +14,11 @@ const OutgoingStockDialog = ({ open, onClose, onSuccess, products, sites }) => {
     notes: ''
   });
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (prefill) setFormData({ ...formData, ...prefill });
+  }, [prefill]);
+  
 
   const handleChange = (e) => {
     const { name, value } = e.target;

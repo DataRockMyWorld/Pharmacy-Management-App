@@ -37,6 +37,7 @@ const WarehouseDashboard = () => {
   const [toDate, setToDate] = useState('');
   const [requesterFilter, setRequesterFilter] = useState('');
   const [requestBranchFilter, setRequestBranchFilter] = useState('ALL');
+  const [dispatchPrefill, setDispatchPrefill] = useState(null);
   const [toDateReq, setToDateReq] = useState('');
   const [fromDateReq, setFromDateReq] = useState('');
   const { ConfirmDialog, confirm } = UseConfirm();
@@ -65,9 +66,31 @@ const WarehouseDashboard = () => {
       ]);
 
       const allNotifications = allReqRes.data;
+      
+      const isBranchRequest = (n) => {
+        const transfer = n.related_transfer;
+        if (!transfer) return false;
+      
+        const source = transfer.source_site || transfer.metadata?.source_site;
+        const requested_by = transfer.metadata?.requested_by;
+      
+        if (!source || typeof source.is_warehouse !== 'boolean') {
+          if (requested_by) {
+            console.warn('⚠️ Missing source, but keeping request from:', requested_by);
+            return true; // Allow it if we have user
+          }
+          console.warn('❌ Discarding: no source, no requester');
+          return false;
+        }
+      
+        return source.is_warehouse === false;
+      };
+      
+      
+      
 
       const pending = allNotifications
-        .filter(n => n.notification_type === 'TRANSFER_REQUEST' && !n.is_read)
+        .filter(n => n.notification_type === 'TRANSFER_REQUEST' && !n.is_read && isBranchRequest(n))
         .map(n => ({
           ...n,
           ...n.related_transfer,
@@ -75,7 +98,7 @@ const WarehouseDashboard = () => {
         }));
 
       const processed = allNotifications
-        .filter(n => n.notification_type === 'TRANSFER_REQUEST' && n.is_read)
+        .filter(n => n.notification_type === 'TRANSFER_REQUEST' && n.is_read && isBranchRequest(n))
         .map(n => ({
           ...n,
           ...n.related_transfer,
@@ -131,6 +154,11 @@ const WarehouseDashboard = () => {
       setSelectedRequest(null);
 
       if (action === 'approve' && withDispatch) {
+        setDispatchPrefill({
+          product_id: selectedRequest.product_id,
+          quantity: selectedRequest.metadata?.quantity,
+          destination_id: selectedRequest.metadata?.requester_branch_id || selectedRequest.metadata?.branch_id
+        });
         setDispatchOpen(true);
       }
 
@@ -193,6 +221,17 @@ const WarehouseDashboard = () => {
     const byTo = !toDateReq || new Date(r.created_at) <= new Date(toDateReq);
     return byRequester && byBranch && byFrom && byTo;
   });
+
+  const handleArchiveRequest = async (req) => {
+    try {
+      await axios.patch(`v1/notifications/archive/${req.id}/`);
+      setProcessedRequests(prev => prev.filter(p => p.id !== req.id));
+      showSnackbar('Request archived successfully');
+    } catch (err) {
+      showSnackbar('Failed to archive request', 'error');
+    }
+  };
+  
   
 
   return (
@@ -287,6 +326,7 @@ const WarehouseDashboard = () => {
                   return byRequester && byBranch && byFrom && byTo;
                 })}
                 onViewRequest={(req) => setSelectedRequest(req)}
+                onArchiveRequest={handleArchiveRequest}
                 statusFilter={statusFilter}
                 setStatusFilter={setStatusFilter}
               />
@@ -305,16 +345,15 @@ const WarehouseDashboard = () => {
         products={inventory.map(i => i.product)}
       />
 
-      <OutgoingStockDialog
-        open={dispatchOpen}
-        onClose={() => setDispatchOpen(false)}
-        onSuccess={() => {
-          fetchData();
-          showSnackbar('Stock dispatched successfully!', 'success');
-        }}
-        products={inventory.map(i => i.product)}
-        sites={branches}
-      />
+<OutgoingStockDialog
+  open={dispatchOpen}
+  onClose={() => { setDispatchOpen(false); setDispatchPrefill(null); }}
+  onSuccess={() => { fetchData(); showSnackbar('Dispatched!', 'success'); }}
+  products={inventory.map(i => i.product)}
+  sites={branches}
+  prefill={dispatchPrefill}
+/>
+
 
       <RequestDetailsDialog
         open={!!selectedRequest}

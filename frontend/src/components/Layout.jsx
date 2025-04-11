@@ -22,8 +22,10 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
 import LocalPharmacyIcon from '@mui/icons-material/LocalPharmacy';
 import PeopleIcon from '@mui/icons-material/People';
+import GroupsIcon from '@mui/icons-material/Groups';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import WarehouseIcon from '@mui/icons-material/Warehouse';
+import StoreIcon from '@mui/icons-material/Store';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 import { useNavigate } from "react-router-dom";
 import logo from '../assets/images/logo.jpg';
@@ -84,9 +86,13 @@ const Layout = () => {
     { text: 'Transaction History', icon: <LocalPharmacyIcon />, path: '/transaction-history' },
     { text: 'Stock', icon: <InventoryIcon />, path: '/stock' },
     { text: 'Customer', icon: <PeopleIcon />, path: '/customer' },
-    { text: 'Product', icon: <InventoryIcon />, path: '/product' },
     ...(user?.role === 'CEO' 
-      ? [{ text: 'Warehouse', icon: <WarehouseIcon />, path: '/warehouse' }] 
+      ? [
+        { text: 'Warehouse', icon: <WarehouseIcon />, path: '/warehouse' },
+        { text: 'Product', icon: <InventoryIcon />, path: '/product' },
+        { text: 'Branches', icon: <StoreIcon />, path: '/branches' },
+        { text: 'Users', icon: <GroupsIcon />, path: '/users' }
+      ]
       : [])
   ];
 
